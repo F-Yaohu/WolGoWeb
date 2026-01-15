@@ -42,10 +42,10 @@ jobs:
           
           # Determine tags based on event
           if [[ "${{ github.event_name }}" == "release" ]]; then
-            TAGS="zy1234567/wol-go-web:$VERSION,zy1234567/wol-go-web-ui:latest"
+            TAGS="zy1234567/wol-go-web:$VERSION,zy1234567/wol-go-web:latest"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG_VERSION=${GITHUB_REF#refs/tags/v}
-            TAGS="zy1234567/wol-go-web:$TAG_VERSION,zy1234567/wol-go-web-ui:latest"
+            TAGS="zy1234567/wol-go-web:$TAG_VERSION,zy1234567/wol-go-web:latest"
           else
             TAGS="zy1234567/wol-go-web:dev"
           fi
