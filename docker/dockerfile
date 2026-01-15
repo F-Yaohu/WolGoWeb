@@ -1,39 +1,48 @@
-FROM --platform=${TARGETPLATFORM} chishin/golang-alpine AS build_base
+# Multi-stage build for WolGoWeb (Enhanced Version)
+FROM --platform=${TARGETPLATFORM} golang:1.21-alpine AS builder
 
-RUN mkdir -p /go/src/github.com/xiaoxinpro/ && \
-    cd /go/src/github.com/xiaoxinpro/ && \
-    git clone https://github.com/xiaoxinpro/WolGoWeb.git && \
-    cd /go/src/github.com/xiaoxinpro && ls -l && \
-    cd /go/src/github.com/xiaoxinpro/WolGoWeb && ls -l && \
-    go get ./src && \
+WORKDIR /build
+
+# Copy source code
+COPY ../src ./src
+COPY ../go.mod ./go.mod
+COPY ../go.sum ./go.sum
+
+# Install dependencies and build
+RUN go mod download && \
     go build -ldflags "-w -s" -trimpath -o WolGoWeb ./src
 
-FROM --platform=${TARGETPLATFORM} alpine
+# Final stage
+FROM --platform=${TARGETPLATFORM} alpine:latest
 
-MAINTAINER chishin <pro@xxgzs.org>
+LABEL maintainer="WolGoWeb Enhanced"
+LABEL description="Wake-on-LAN Web Management Tool with Modern UI"
 
-ENV VERSION ${BUILD_VERSION}
-ENV PORT 9090
-ENV KEY false
-ENV WEB true
-ENV TZ Asia/Shanghai
+ENV VERSION=${BUILD_VERSION:-latest}
+ENV PORT=9090
+ENV KEY=false
+ENV WEB=true
+ENV USERNAME=admin
+ENV PASSWORD=admin
+ENV TZ=Asia/Shanghai
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk add tzdata && \
+    apk add --no-cache tzdata && \
     ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
-    mkdir /web
+    mkdir -p /web/data
 
 WORKDIR /web
 
-COPY --from=build_base /go/src/github.com/xiaoxinpro/WolGoWeb/WolGoWeb .
+# Copy binary from builder
+COPY --from=builder /build/WolGoWeb .
 
-RUN chmod 755 /web/WolGoWeb
+RUN chmod +x /web/WolGoWeb
 
-VOLUME /web
+VOLUME ["/web/data"]
 
 EXPOSE $PORT
 
-CMD /web/WolGoWeb -c env
+CMD ["/web/WolGoWeb", "-c", "env"]
 
 

@@ -1,10 +1,14 @@
 version: '3'
 services:
   wol-go-web:
-    image: chishin/wol-go-web
+    image: zy1234567/wol-go-web:latest
     container_name: WolGoWeb
     restart: unless-stopped
     network_mode: host
     environment:
       - PORT=9090
       - KEY=false
+      - USERNAME=admin
+      - PASSWORD=admin
+    volumes:
+      - ./data:/web/data

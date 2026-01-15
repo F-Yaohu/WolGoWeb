@@ -16,3 +16,21 @@
 /output
 /pkg
 /.idea
+
+# Runtime data files
+devices.json
+data/
+
+# Build artifacts
+WolGoWeb
+WolGoWeb_*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~

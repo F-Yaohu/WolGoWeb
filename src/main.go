@@ -5,11 +5,14 @@ import (
 	"embed"
 	"flag"
 	"fmt"
-	"github.com/gin-gonic/gin"
+	"math/rand"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 var (
@@ -28,6 +31,7 @@ var (
 
 var (
 	vkBakDict = make(map[string]int64)
+	tokens    = make(map[string]string) // token -> username
 )
 
 //go:embed index.html
@@ -88,22 +92,41 @@ func main() {
 		ApiKey = getEnvString("KEY", ApiKey)
 	}
 
+	// Initialize random seed
+	rand.Seed(time.Now().UnixNano())
+
+	// Load devices
+	if err := LoadDevices(); err != nil {
+		fmt.Printf("Warning: Failed to load devices: %v\n", err)
+	}
+
 	gin.SetMode(WebMode)
 
 	r := gin.Default()
 
 	// 添加 Web 服务
 	if WebEnable {
-		if WebUsername != "" && WebPassword != "" {
-			ginUserAccount := gin.BasicAuth(gin.Accounts{WebUsername: WebPassword})
-			r.GET("/", ginUserAccount, GetIndex)
-			r.GET("/index", ginUserAccount, GetIndex)
-			fmt.Printf("BasicAuth\n  username:%s\n  password:%s\n\n", WebUsername, WebPassword)
-		} else {
-			r.GET("/", GetIndex)
-			r.GET("/index", GetIndex)
+		// 忽略 Chrome DevTools 的噪声请求
+		r.GET("/.well-known/appspecific/com.chrome.devtools.json", func(c *gin.Context) {
+			c.Status(204)
+		})
+
+		r.GET("/", GetIndex)
+		r.GET("/index", GetIndex)
+
+		r.POST("/auth/login", Login)
+
+		api := r.Group("/api")
+		api.Use(AuthMiddleware())
+		{
+			api.GET("/devices", GetDevices)
+			api.POST("/devices", CreateDevice)
+			api.DELETE("/devices/:id", DeleteDevice)
+			api.POST("/wake/:id", WakeDevice)
+			api.GET("/scan", GetScan)
 		}
 	}
+	// Old WOL API
 	r.GET("/wol", GetWol)
 
 	fmt.Printf("WolGoWeb Runing [port:%d, key:%s, web:%s]\n", WebPort, ApiKey, strconv.FormatBool(WebEnable))
@@ -111,6 +134,113 @@ func main() {
 	err = r.Run(fmt.Sprintf(":%d", WebPort))
 	if err != nil {
 		fmt.Println(err.Error())
+	}
+}
+
+func GenerateToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func Login(c *gin.Context) {
+	var login struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&login); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	// Basic Auth Logic based on flags
+	// If WebUsername/Password are empty, login is permissive or disabled?
+	// Requirement says "If not logged in, force login".
+	// So we assume username/password MUST be set for this feature to work well.
+	if (WebUsername == "" && WebPassword == "") || (login.Username == WebUsername && login.Password == WebPassword) {
+		token := GenerateToken()
+		tokens[token] = login.Username
+		c.JSON(http.StatusOK, gin.H{"token": token})
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+	}
+}
+
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if WebUsername == "" && WebPassword == "" {
+			c.Next()
+			return
+		}
+
+		authHeader := c.GetHeader("Authorization")
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if _, ok := tokens[token]; ok {
+			c.Next()
+		} else {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		}
+	}
+}
+
+func GetDevices(c *gin.Context) {
+	if c.Query("refresh") == "true" {
+		UpdateStatuses()
+	}
+	c.JSON(http.StatusOK, GetAllDevices())
+}
+
+func GetScan(c *gin.Context) {
+	devices, err := ScanLocalNetwork()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, devices)
+}
+
+func CreateDevice(c *gin.Context) {
+	var d Device
+	if err := c.ShouldBindJSON(&d); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate MAC
+	if _, err := New(d.MAC); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid MAC address"})
+		return
+	}
+
+	d.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	if err := AddDevice(d); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, d)
+}
+
+func DeleteDevice(c *gin.Context) {
+	id := c.Param("id")
+	if err := RemoveDevice(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Device deleted"})
+}
+
+func WakeDevice(c *gin.Context) {
+	id := c.Param("id")
+	dev, err := GetDevice(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	if err := Wake(dev.MAC, dev.IP, dev.Port, ""); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"message": "Wake signal sent"})
 	}
 }
 
