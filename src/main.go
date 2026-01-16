@@ -237,7 +237,21 @@ func WakeDevice(c *gin.Context) {
 		return
 	}
 
-	if err := Wake(dev.MAC, dev.IP, dev.Port, ""); err != nil {
+	// Use broadcast address for WOL packets - devices are offline and need broadcast
+	targetIP := "255.255.255.255"
+	if dev.IP != "" && dev.IP != "0.0.0.0" {
+		// Still use broadcast, but we could use device IP for directed broadcast
+		// For most reliable WOL, always use broadcast address
+		targetIP = "255.255.255.255"
+	}
+
+	// Default port to "9" if not set
+	targetPort := dev.Port
+	if targetPort == "" {
+		targetPort = "9"
+	}
+
+	if err := Wake(dev.MAC, targetIP, targetPort, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	} else {
 		c.JSON(http.StatusOK, gin.H{"message": "Wake signal sent"})
